@@ -1,0 +1,115 @@
+import argparse
+from scapy.all import *
+import os
+from datetime import datetime
+
+def perform_active_discovery(target_ip):
+    print(f"Performing active discovery on host: {target_ip}")
+
+    icmp_packet = IP(dst=target_ip) / ICMP()
+
+    response = sr1(icmp_packet, timeout=5, verbose=True)
+
+    if response:
+        print(f"The host {target_ip} is reachable.")
+        print(response)
+    else:
+        print(f"No response from {target_ip} (Invalid address?)")
+
+def test_hosts_in_network(network_address):
+    print(f"Testing hosts in network: {network_address}")
+    reachable_hosts = []
+
+    network_parts = network_address.split("/")
+    ip_class, ip_parts = determine_ip_class(network_parts[0])
+
+    if ip_class in {"Class A", "Class B", "Class C"}:
+        print(ip_class)
+
+        for i in range(1, 256):
+            for j in range(1, 256):
+                for k in range(1, 256):
+                    ip = f"{ip_parts[0]}.{i}.{j}.{k}"
+                    response = sr(IP(dst=ip) / ICMP(), timeout=5, verbose=False)
+
+                    if response and response[0][1].type == 0:
+                        reachable_hosts.append(ip)
+
+    else:
+        return "Error: Invalid network address"
+    
+    print(reachable_hosts)
+
+def determine_ip_class(ip_address):
+    ip_parts = list(map(int, ip_address.split('.')))
+    first_octet = ip_parts[0]
+
+    if 1 <= first_octet <= 126:
+        return "Class A", ip_parts
+    elif 128 <= first_octet <= 191:
+        return "Class B", ip_parts
+    elif 192 <= first_octet <= 223:
+        return "Class C", ip_parts
+    elif 224 <= first_octet <= 239:
+        return "Class D (multicast)", None
+    elif 240 <= first_octet <= 255:
+        return "Class E (reserved)", None
+    else:
+        return "Invalid IP Address", None
+
+def perform_passive_discovery(target_ip):
+    def process_arp_packet(packet):
+        if ARP in packet and packet[ARP].op == 2 and packet[ARP].psrc == target_ip:
+            print(f"The IP address {target_ip} is active.")
+            exit()
+
+    print(f"Listening for ARP request from {target_ip}")
+    sniff(prn=process_arp_packet, store=0)
+
+def export_results_to_txt(target_ip):
+    print(f"Exporting results for host: {target_ip}")
+
+    folder_name = "tmp"
+    file_name = "result.txt"
+    if not os.path.exists(folder_name):
+        os.makedirs(folder_name)
+
+    file_path = os.path.join(folder_name, file_name)
+
+    icmp_packet = IP(dst=target_ip) / ICMP()
+
+    response = sr1(icmp_packet, timeout=5, verbose=True)
+
+    if response:
+        print(f"The host {target_ip} is reachable.")
+        with open(file_path, 'a') as file:
+            current_datetime = datetime.now()
+            file.write(f"{current_datetime} - The host {target_ip} is reachable\n")
+    else:
+        print(f"No response from {target_ip} (Invalid address?)")
+        with open(file_path, 'a') as file:
+            current_datetime = datetime.now()
+            file.write(f"{current_datetime} - No response from {target_ip} (Invalid address?)\n")
+
+def main():
+    arg_parser = argparse.ArgumentParser(description="Network hosts discovery tool.")
+    arg_parser.add_argument("-a", "--active", metavar="TARGET_IP", help="Perform active discovery on the specified host.")
+    arg_parser.add_argument("-t", "--test", metavar="NETWORK_ADDRESS/MASK", help="Test the presence of hosts in a network. Example: 192.128.1.0/24")
+    arg_parser.add_argument("-p", "--passive", metavar="TARGET_IP", help="Perform passive discovery on the specified host.")
+    arg_parser.add_argument("-x", "--export", metavar="TARGET_IP", help="Export results for the specified host to a text file.")
+
+    args = arg_parser.parse_args()
+
+    if args.active:
+        perform_active_discovery(args.active)
+    elif args.test:
+        test_hosts_in_network(args.test)
+    elif args.passive:
+        perform_passive_discovery(args.passive)
+    elif args.export:
+        export_results_to_txt(args.export)
+    else:
+        print("No option specified. Use -h or --help to see the available arguments.")
+
+if __name__ == "__main__":
+    main()

